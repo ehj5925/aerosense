@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AeroSense — 기상·지형 기반 항공 경로 어드바이저</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{
+    --bg:#0A0F1C; --panel:#121A2B; --panel-2:#0E1526; --edge:#223049;
+    --text:#E7EEF9; --muted:#7C8CAA; --cyan:#57C7D4; --cyan-dim:#2E5A61; --amber:#E8B44A;
+    --risk-low:#3FA796; --risk-mid:#E8B44A; --risk-high:#E4574B;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  body{padding:16px;max-width:1180px;margin:0 auto;}
+  header.top{margin-bottom:14px;}
+  header.top h1{font-size:20px;font-weight:650;margin:0 0 4px 0;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  header.top h1 span.tag{font-family:var(--mono);font-size:11px;color:var(--cyan);border:1px solid var(--cyan-dim);border-radius:3px;padding:2px 6px;}
+  header.top p{margin:0;font-size:13px;color:var(--muted);line-height:1.5;max-width:76ch;}
+
+  .panel{background:var(--panel);border:1px solid var(--edge);border-radius:6px;}
+
+  .tabs{display:flex;gap:6px;margin-bottom:12px;}
+  .tabbtn{font-family:var(--sans);font-size:13.5px;font-weight:600;color:var(--muted);background:var(--panel);
+    border:1px solid var(--edge);border-radius:6px;padding:10px 16px;cursor:pointer;flex:1;text-align:left;}
+  .tabbtn .num{font-family:var(--mono);font-size:10px;color:var(--cyan);display:block;margin-bottom:2px;letter-spacing:0.5px;}
+  .tabbtn.active{border-color:var(--cyan);color:var(--text);background:linear-gradient(180deg,rgba(87,199,212,0.09),transparent);}
+  .tabbtn:disabled{opacity:0.4;cursor:not-allowed;}
+
+  .section{display:none;}
+  .section.active{display:block;}
+
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:12px;margin-bottom:12px;}
+  .field{display:flex;flex-direction:column;gap:4px;}
+  .field label{font-size:11px;color:var(--muted);}
+  select,button{font-family:var(--sans);font-size:13px;color:var(--text);background:var(--panel-2);
+    border:1px solid var(--edge);border-radius:4px;padding:7px 10px;cursor:pointer;}
+  select:focus,button:focus,input:focus{outline:2px solid var(--cyan);outline-offset:1px;}
+  button:hover{border-color:var(--cyan-dim);}
+  button.primary{background:var(--cyan);color:#062225;border-color:var(--cyan);font-weight:600;}
+  button.primary:hover{background:#6ad4e0;}
+  button.active{border-color:var(--cyan);color:var(--cyan);}
+  button:disabled{opacity:0.4;cursor:not-allowed;}
+  .btngroup{display:flex;gap:4px;}
+  .field.slider{min-width:200px;flex:1;}
+  .slider-row{display:flex;align-items:center;gap:8px;}
+  .slider-row span{font-size:10px;color:var(--muted);white-space:nowrap;}
+  input[type=range]{flex:1;accent-color:var(--cyan);}
+  .chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);}
+  .chk input{accent-color:var(--cyan);}
+
+  .mapbox{height:420px;border-radius:4px;overflow:hidden;border:1px solid var(--edge);}
+  .maphead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;}
+  .maphead h2{font-size:12px;font-weight:600;margin:0;color:var(--muted);}
+  .legend{display:flex;gap:10px;font-size:10px;color:var(--muted);align-items:center;}
+  .legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:3px;vertical-align:-1px;}
+  .plane-arrow{width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:15px solid #fff;
+    filter:drop-shadow(0 0 3px rgba(0,0,0,0.7));transform-origin:50% 60%;}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
+  @media (max-width:700px){.grid2{grid-template-columns:1fr;}}
+  .card{padding:12px;}
+  .card h2{font-size:12px;font-weight:600;margin:0 0 8px 0;color:var(--muted);}
+  .stat-row{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--edge);}
+  .stat-row:last-child{border-bottom:none;}
+  .stat-row .v{font-family:var(--mono);font-weight:600;}
+  .stat-row .v.risk-low{color:var(--risk-low);}
+  .stat-row .v.risk-mid{color:var(--risk-mid);}
+  .stat-row .v.risk-high{color:var(--risk-high);}
+
+  .briefbox{background:var(--panel-2);border:1px solid var(--edge);border-radius:4px;padding:10px;font-size:13px;line-height:1.55;min-height:60px;}
+  .briefbox.empty{color:var(--muted);}
+  .cta-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+
+  .empty-state{padding:40px 20px;text-align:center;color:var(--muted);font-size:13.5px;line-height:1.6;}
+
+  .main{display:grid;grid-template-columns:1fr 300px;gap:12px;}
+  @media (max-width:760px){.main{grid-template-columns:1fr;}}
+  .hud{padding:12px;display:flex;flex-direction:column;gap:10px;}
+  .hud h2{font-size:12px;font-weight:600;margin:0 0 2px 0;color:var(--muted);}
+  .readouts{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .ro{background:var(--panel-2);border:1px solid var(--edge);border-radius:4px;padding:7px 9px;}
+  .ro .k{font-size:9.5px;color:var(--muted);margin-bottom:2px;}
+  .ro .v{font-family:var(--mono);font-size:15px;font-weight:600;}
+  .ro .v.risk-low{color:var(--risk-low);} .ro .v.risk-mid{color:var(--risk-mid);} .ro .v.risk-high{color:var(--risk-high);}
+  .ro.wide{grid-column:1/-1;}
+  .advisory-box{background:var(--panel-2);border:1px solid var(--edge);border-radius:4px;padding:9px;min-height:54px;}
+  .advisory-box .lbl{font-size:9.5px;color:var(--muted);margin-bottom:4px;}
+  .advisory-box .txt{font-size:13px;line-height:1.5;}
+  .advisory-box .txt.empty{color:var(--muted);}
+
+  .log{padding:10px;margin-top:12px;}
+  .log h2{font-size:12px;font-weight:600;margin:0 0 8px 0;color:var(--muted);}
+  .logbody{max-height:200px;overflow-y:auto;display:flex;flex-direction:column-reverse;}
+  .logentry{border-left:2px solid var(--edge);padding:5px 0 5px 10px;font-size:12.5px;line-height:1.4;}
+  .logentry .tag{font-family:var(--mono);font-size:9.5px;padding:1px 5px;border-radius:3px;margin-right:6px;}
+  .logentry.sys{border-left-color:var(--cyan-dim);} .logentry.sys .tag{background:rgba(87,199,212,0.12);color:var(--cyan);}
+  .logentry.ai{border-left-color:#5b4a8a;} .logentry.ai .tag{background:rgba(155,120,220,0.15);color:#b79ce8;}
+  .logentry time{color:var(--muted);font-family:var(--mono);font-size:10.5px;margin-left:6px;}
+
+  footer{margin-top:14px;font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--edge);padding-top:10px;}
+  .leaflet-container{background:#0E1526;font-family:var(--sans);}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>AeroSense <span class="tag">PROTOTYPE SIM</span></h1>
+  <p>실제 지도(OpenStreetMap) 위에서 기상·지형 위험지수 기반 경로를 생성하고, 별도의 시뮬레이션 모드에서 약 2분 동안 압축된 가상 비행을 진행하며 실시간 데이터 기반 AI 음성 운항 조언을 제공합니다.</p>
+</header>
+
+<div class="controls panel" id="dataSourcePanel">
+  <div class="field"><label>데이터 연동 설정</label>
+    <div class="slider-row" style="gap:10px;">
+      <input type="text" id="backendUrl" value="http://localhost:3787" style="width:220px;font-family:var(--mono);font-size:12px;padding:6px 8px;background:var(--panel-2);border:1px solid var(--edge);border-radius:4px;color:var(--text);">
+      <div class="chk"><input type="checkbox" id="useRealData"><label for="useRealData">실제 API 데이터 사용</label></div>
+      <span id="dataStatusBadge" style="font-family:var(--mono);font-size:10.5px;color:var(--muted);border:1px solid var(--edge);border-radius:3px;padding:2px 7px;">시뮬레이션 모드</span>
+    </div>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tabbtn active" id="tab1Btn"><span class="num">STEP 1</span>경로 계획 + AI 브리핑</button>
+  <button class="tabbtn" id="tab2Btn"><span class="num">STEP 2</span>실시간 시뮬레이션 (약 2분)</button>
+</div>
+
+<!-- ===================== TAB 1: 경로 계획 ===================== -->
+<section class="section active" id="tab1">
+  <div class="controls panel">
+    <div class="field"><label for="startSel">출발</label><select id="startSel"></select></div>
+    <div class="field"><label for="endSel">도착</label><select id="endSel"></select></div>
+    <div class="field slider">
+      <label for="weightSlider">경로 가중치</label>
+      <div class="slider-row"><span>신속 우선</span><input type="range" id="weightSlider" min="0" max="100" value="55"><span>안전 우선</span></div>
+    </div>
+    <div class="field"><label>&nbsp;</label><button id="planBtn" class="primary">경로 생성</button></div>
+    <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="gridToggle1"><label for="gridToggle1">위험지수 격자 표시</label></div></div>
+  </div>
+
+  <div class="panel" style="padding:10px;">
+    <div class="maphead">
+      <h2>생성된 경로</h2>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--risk-low)"></span>낮음</span>
+        <span><span class="sw" style="background:var(--risk-mid)"></span>중간</span>
+        <span><span class="sw" style="background:var(--risk-high)"></span>높음</span>
+      </div>
+    </div>
+    <div id="mapPlan" class="mapbox"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card panel">
+      <h2>경로 요약</h2>
+      <div class="stat-row"><span>총 구간</span><span class="v" id="sumDist">–</span></div>
+      <div class="stat-row"><span>평균 위험지수</span><span class="v" id="sumAvgRisk">–</span></div>
+      <div class="stat-row"><span>최고 위험지수 구간</span><span class="v" id="sumMaxRisk">–</span></div>
+      <div class="stat-row"><span>가중치 설정</span><span class="v" id="sumWeight">–</span></div>
+    </div>
+    <div class="card panel">
+      <h2>AI 사전 브리핑</h2>
+      <div class="briefbox empty" id="briefText">경로를 먼저 생성한 뒤 브리핑을 요청하세요.</div>
+      <div class="cta-row">
+        <button id="briefBtn" disabled>AI 브리핑 요청</button>
+        <button id="goSimBtn" class="primary" disabled>이 경로로 시뮬레이션 시작 →</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TAB 2: 시뮬레이션 ===================== -->
+<section class="section" id="tab2">
+  <div id="simEmpty" class="empty-state panel">
+    아직 생성된 경로가 없습니다. <br>“경로 계획” 탭에서 먼저 출발·도착지를 선택하고 경로를 생성해주세요.
+  </div>
+
+  <div id="simContent" style="display:none;">
+    <div class="controls panel">
+      <div class="field">
+        <label>목표 소요시간</label>
+        <div class="btngroup">
+          <button id="spd05" data-spd="0.5">4분</button>
+          <button id="spd1" data-spd="1" class="active">2분</button>
+          <button id="spd2" data-spd="2">1분</button>
+        </div>
+      </div>
+      <div class="field"><label>&nbsp;</label>
+        <div class="btngroup">
+          <button id="startBtn" class="primary">운항 시작</button>
+          <button id="pauseBtn" disabled>일시정지</button>
+          <button id="resetBtn">초기화</button>
+        </div>
+      </div>
+      <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="voiceToggle" checked><label for="voiceToggle">AI 음성 안내</label></div></div>
+      <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="gridToggle2"><label for="gridToggle2">위험지수 격자 표시</label></div></div>
+      <div class="field"><label>&nbsp;</label><button id="adviceBtn">지금 조언 요청</button></div>
+    </div>
+
+    <div class="main">
+      <div class="panel" style="padding:10px;">
+        <div class="maphead">
+          <h2>실시간 위치</h2>
+          <div class="legend">
+            <span><span class="sw" style="background:var(--risk-low)"></span>낮음</span>
+            <span><span class="sw" style="background:var(--risk-mid)"></span>중간</span>
+            <span><span class="sw" style="background:var(--risk-high)"></span>높음</span>
+          </div>
+        </div>
+        <div id="mapSim" class="mapbox"></div>
+      </div>
+
+      <div class="hud panel">
+        <h2>현재 위치 상태 (실시간 API 수신값 기준)</h2>
+        <div class="readouts">
+          <div class="ro"><div class="k">경과 시간</div><div class="v" id="roTime">00:00</div></div>
+          <div class="ro"><div class="k">진행률</div><div class="v" id="roProg">0%</div></div>
+          <div class="ro"><div class="k">풍속</div><div class="v" id="roWind">–</div></div>
+          <div class="ro"><div class="k">난기류</div><div class="v" id="roTurb">–</div></div>
+          <div class="ro"><div class="k">시정</div><div class="v" id="roVis">–</div></div>
+          <div class="ro"><div class="k">지형고도지수</div><div class="v" id="roTerr">–</div></div>
+          <div class="ro wide"><div class="k">종합 위험지수</div><div class="v" id="roRisk">–</div></div>
+        </div>
+        <h2 style="margin-top:4px;">AI 운항 조언</h2>
+        <div class="advisory-box">
+          <div class="lbl">가장 최근 안내</div>
+          <div class="txt empty" id="advisoryText">운항을 시작하면 현재 위치 기준 조언이 여기에 표시됩니다.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="log panel">
+      <h2>운항 로그</h2>
+      <div class="logbody" id="logBody"></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  이 데모는 발표·시연용 프로토타입입니다. 지도는 OpenStreetMap의 실제 지리 데이터를 사용하지만, 풍속·난기류·시정·지형고도·위험지수는 실제 기상청 API가 아닌 절차적으로 생성한 시뮬레이션 값입니다. "실시간 API 수신"이라는 표현은 시뮬레이션상의 주기적 데이터 갱신을 의미합니다. AI(Claude)는 산출된 수치를 바탕으로 조언 문장만 생성하며, 경로 자체는 A* 알고리즘이 결정합니다. 실서비스화 시에는 기상청 API허브(항공기상)와 국내 지형 데이터(V-World 등) 연동이 필요합니다.
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Grid / geography config ----------
+  const COLS=24, ROWS=30;
+  const BBOX={latN:38.8, latS:33.0, lonW:124.5, lonE:131.0};
+  const latStep=(BBOX.latN-BBOX.latS)/(ROWS-1), lonStep=(BBOX.lonE-BBOX.lonW)/(COLS-1);
+  const AIRPORTS=[
+    {id:"GMP",name:"김포",lat:37.5583,lon:126.7906},
+    {id:"ICN",name:"인천",lat:37.4692,lon:126.4505},
+    {id:"CJU",name:"제주",lat:33.5113,lon:126.4930},
+    {id:"PUS",name:"부산/김해",lat:35.1795,lon:128.9382},
+    {id:"TAE",name:"대구",lat:35.8942,lon:128.6589},
+    {id:"KWJ",name:"광주",lat:35.1264,lon:126.8089},
+    {id:"RSU",name:"여수",lat:34.8420,lon:127.6170},
+  ];
+  function latlonToGrid(lat,lon){
+    const c=Math.round((lon-BBOX.lonW)/(BBOX.lonE-BBOX.lonW)*(COLS-1));
+    const r=Math.round((BBOX.latN-lat)/(BBOX.latN-BBOX.latS)*(ROWS-1));
+    return {r:Math.max(0,Math.min(ROWS-1,r)), c:Math.max(0,Math.min(COLS-1,c))};
+  }
+  function gridToLatLng(r,c){ return [BBOX.latN-r*latStep, BBOX.lonW+c*lonStep]; }
+  function cellBounds(r,c){
+    const latTop=BBOX.latN-(r-0.5)*latStep, latBot=BBOX.latN-(r+0.5)*latStep;
+    const lonL=BBOX.lonW+(c-0.5)*lonStep, lonR=BBOX.lonW+(c+0.5)*lonStep;
+    return [[latBot,lonL],[latTop,lonR]];
+  }
+  AIRPORTS.forEach(a=>{ const g=latlonToGrid(a.lat,a.lon); a.r=g.r; a.c=g.c; });
+
+  // ---------- Terrain (static) ----------
+  function hash(r,c){ const x=Math.sin(r*12.9898+c*78.233)*43758.5453; return x-Math.floor(x); }
+  function hash2(r,c){ const x=Math.sin(r*39.346+c*11.135+7.77)*24634.634; return x-Math.floor(x); }
+  function ridgeCol(r){ return COLS*0.62 + 2.5*Math.sin(r*0.28); }
+  const elevGrid=[];
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let c=0;c<COLS;c++){
+      const d=c-ridgeCol(r);
+      const base=Math.exp(-(d*d)/(2*2.2*2.2));
+      row.push(Math.min(1, base*0.95+hash(r,c)*0.2));
+    }
+    elevGrid.push(row);
+  }
+
+  // ---------- Weather (time-dependent) ----------
+  function stormCenterCol(t){ const speed=COLS/7; return ((t*speed)%(COLS+12))-6; }
+  function stormIntensity(r,c,t){
+    const sc=stormCenterCol(t), dx=c-sc;
+    const base=Math.exp(-(dx*dx)/(2*3.2*3.2));
+    return Math.min(1, base*(0.55+0.45*hash2(r,c)));
+  }
+  function weatherAt(r,c,t){
+    const si=stormIntensity(r,c,t), n1=hash(r,c), n2=hash2(r,c);
+    return {
+      wind: 6+38*si+8*n1,
+      turb: 4+75*si*(0.5+0.5*n2),
+      vis: Math.max(1, 10-7.5*si-2.5*n1),
+      precip: si>0.45 ? si : 0, si
+    };
+  }
+  function riskAt(r,c,t){
+    const w=weatherAt(r,c,t);
+    const windN=Math.min(1,w.wind/45), turbN=Math.min(1,w.turb/100);
+    const visN=Math.min(1,Math.max(0,(10-w.vis)/9)), terrN=elevGrid[r][c], precN=Math.min(1,w.precip);
+    const score=100*(0.25*windN+0.25*turbN+0.2*visN+0.15*terrN+0.15*precN);
+    return {score, wind:w.wind, turb:w.turb, vis:w.vis, precip:w.precip, terrN};
+  }
+  function buildRiskGrid(t){
+    const g=[];
+    for(let r=0;r<ROWS;r++){ const row=[]; for(let c=0;c<COLS;c++) row.push(riskAt(r,c,t)); g.push(row); }
+    return g;
+  }
+
+  // ---------- A* ----------
+  function key(r,c){ return r*COLS+c; }
+  function heuristic(a,b){ return Math.hypot(a.c-b.c,a.r-b.r); }
+  function astar(start,end,riskGrid,k){
+    const nodes=new Map(), open=new Set(), closed=new Set();
+    const sk=key(start.r,start.c), ek=key(end.r,end.c);
+    nodes.set(sk,{r:start.r,c:start.c,g:0,parent:null}); open.add(sk);
+    while(open.size>0){
+      let bestKey=null,bestF=Infinity;
+      for(const k2 of open){ const nd=nodes.get(k2); const f=nd.g+heuristic(nd,end); if(f<bestF){bestF=f;bestKey=k2;} }
+      if(bestKey===ek) break;
+      open.delete(bestKey); closed.add(bestKey);
+      const cur=nodes.get(bestKey);
+      for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+        if(dr===0&&dc===0) continue;
+        const nr=cur.r+dr, nc=cur.c+dc;
+        if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+        const nk=key(nr,nc);
+        if(closed.has(nk)) continue;
+        const dist=(dr!==0&&dc!==0)?Math.SQRT2:1;
+        const avgRisk=(riskGrid[cur.r][cur.c].score+riskGrid[nr][nc].score)/2;
+        const g2=cur.g+dist*(1+k*avgRisk/100);
+        const existing=nodes.get(nk);
+        if(!existing||g2<existing.g){ nodes.set(nk,{r:nr,c:nc,g:g2,parent:bestKey}); open.add(nk); }
+      }
+    }
+    if(!nodes.has(ek)) return null;
+    const path=[]; let ck=ek;
+    while(ck!==null){ const nd=nodes.get(ck); path.push({r:nd.r,c:nd.c}); ck=nd.parent; }
+    path.reverse(); return path;
+  }
+  function weightToK(v){ return 0.3 + (v/100)*7.7; }
+
+  // ---------- color helpers ----------
+  function lerp(a,b,t){ return a+(b-a)*t; }
+  function lerpColor(h1,h2,t){
+    const c1=[parseInt(h1.slice(1,3),16),parseInt(h1.slice(3,5),16),parseInt(h1.slice(5,7),16)];
+    const c2=[parseInt(h2.slice(1,3),16),parseInt(h2.slice(3,5),16),parseInt(h2.slice(5,7),16)];
+    return `rgb(${Math.round(lerp(c1[0],c2[0],t))},${Math.round(lerp(c1[1],c2[1],t))},${Math.round(lerp(c1[2],c2[2],t))})`;
+  }
+  function riskColor(score){
+    if(score<40) return lerpColor("#3FA796","#E8B44A",score/40);
+    return lerpColor("#E8B44A","#E4574B",Math.min(1,(score-40)/60));
+  }
+
+  // ---------- Leaflet maps ----------
+  const KR_CENTER=[36.3,127.8];
+  function makeMap(divId){
+    const map=L.map(divId,{zoomControl:true,attributionControl:true}).setView(KR_CENTER,7);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{
+      maxZoom:16, attribution:'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, FAO, NOAA, USGS'
+    }).addTo(map);
+    return map;
+  }
+  const mapPlan=makeMap('mapPlan');
+  let mapSim=null; // created lazily on first sim view
+
+  const planLayers={route:L.layerGroup().addTo(mapPlan), airports:L.layerGroup().addTo(mapPlan), grid:L.layerGroup()};
+  let simLayers=null;
+
+  function renderAirports(map, layerGroup, startId, endId){
+    layerGroup.clearLayers();
+    AIRPORTS.forEach(a=>{
+      const isStart=a.id===startId, isEnd=a.id===endId;
+      const color= isStart? "#57C7D4" : isEnd? "#E4574B" : "#cfd9ea";
+      const radius= (isStart||isEnd) ? 7 : 5;
+      L.circleMarker([a.lat,a.lon],{radius,color,weight:2,fillColor:color,fillOpacity:0.9})
+        .bindTooltip(a.name+(isStart?" (출발)":isEnd?" (도착)":""), {permanent:false, direction:"top"})
+        .addTo(layerGroup);
+    });
+  }
+  function renderRoute(layerGroup, path, riskGrid){
+    layerGroup.clearLayers();
+    for(let i=0;i<path.length-1;i++){
+      const a=path[i], b=path[i+1];
+      const avgRisk=(riskGrid[a.r][a.c].score+riskGrid[b.r][b.c].score)/2;
+      L.polyline([gridToLatLng(a.r,a.c), gridToLatLng(b.r,b.c)], {color:riskColor(avgRisk), weight:5, opacity:0.85, lineCap:"round"}).addTo(layerGroup);
+    }
+  }
+  function renderGrid(layerGroup, riskGrid){
+    layerGroup.clearLayers();
+    for(let r=0;r<ROWS;r+=1) for(let c=0;c<COLS;c+=1){
+      L.rectangle(cellBounds(r,c), {color:riskColor(riskGrid[r][c].score), weight:0, fillOpacity:0.28}).addTo(layerGroup);
+    }
+  }
+
+  // ---------- Tab switching ----------
+  const tab1Btn=document.getElementById("tab1Btn"), tab2Btn=document.getElementById("tab2Btn");
+  const tab1=document.getElementById("tab1"), tab2=document.getElementById("tab2");
+  function showTab(n){
+    tab1.classList.toggle("active", n===1);
+    tab2.classList.toggle("active", n===2);
+    tab1Btn.classList.toggle("active", n===1);
+    tab2Btn.classList.toggle("active", n===2);
+    if(n===1) setTimeout(()=>mapPlan.invalidateSize(), 50);
+    if(n===2 && mapSim) setTimeout(()=>mapSim.invalidateSize(), 50);
+  }
+  tab1Btn.addEventListener("click", ()=>showTab(1));
+  tab2Btn.addEventListener("click", ()=>{ if(routeState.path) showTab(2); });
+
+  // ---------- Route planning state ----------
+  const startSel=document.getElementById("startSel"), endSel=document.getElementById("endSel");
+  AIRPORTS.forEach(a=>{
+    const o1=document.createElement("option"); o1.value=a.id; o1.textContent=`${a.name} (${a.id})`; startSel.appendChild(o1);
+    const o2=document.createElement("option"); o2.value=a.id; o2.textContent=`${a.name} (${a.id})`; endSel.appendChild(o2);
+  });
+  startSel.value="GMP"; endSel.value="CJU";
+  const weightSlider=document.getElementById("weightSlider");
+  const gridToggle1=document.getElementById("gridToggle1");
+
+  const routeState={ path:null, riskGrid:null, startId:null, endId:null, weight:null };
+
+  function fmtTime(mins){ const h=Math.floor(mins/60), m=Math.floor(mins%60); return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0"); }
+
+  // ---------- Data source layer: real backend (기상청 연동) vs procedural simulation ----------
+  const backendUrlInput=document.getElementById("backendUrl");
+  const useRealDataChk=document.getElementById("useRealData");
+  const dataStatusBadge=document.getElementById("dataStatusBadge");
+  function setDataStatus(mode, text){
+    dataStatusBadge.textContent=text;
+    dataStatusBadge.style.color = mode==="live" ? "var(--risk-low)" : mode==="error" ? "var(--risk-high)" : "var(--muted)";
+    dataStatusBadge.style.borderColor = mode==="live" ? "var(--risk-low)" : mode==="error" ? "var(--risk-high)" : "var(--edge)";
+  }
+  // t: 0~3 사이의 절차적 "시간" 값 (시뮬레이션 모드에서만 의미 있음, 실데이터 모드에선 무시하고 항상 최신값을 받음)
+  async function getRiskGrid(t){
+    if(!useRealDataChk.checked){ setDataStatus("sim","시뮬레이션 모드"); return buildRiskGrid(t); }
+    const base=backendUrlInput.value.trim().replace(/\/+$/,"");
+    try{
+      const resp=await fetch(`${base}/api/live-grid`, {signal: AbortSignal.timeout(8000)});
+      if(!resp.ok) throw new Error("HTTP "+resp.status);
+      const data=await resp.json();
+      if(!data.grid || data.grid.length!==ROWS) throw new Error("격자 형식 불일치");
+      setDataStatus("live","실데이터 연동 중");
+      return data.grid;
+    }catch(err){
+      setDataStatus("error","연동 실패 — 시뮬레이션으로 대체");
+      if(typeof addLog==="function") addLog("sys","SYS", `실데이터 연동 실패(${err.message}) — 시뮬레이션 값으로 대체합니다.`, 0);
+      return buildRiskGrid(t);
+    }
+  }
+
+  async function planRoute(){
+    const s=AIRPORTS.find(a=>a.id===startSel.value), e=AIRPORTS.find(a=>a.id===endSel.value);
+    if(s.id===e.id){ alert("출발지와 도착지를 다르게 선택해주세요."); return; }
+    const riskGrid=await getRiskGrid(0);
+    const k=weightToK(parseInt(weightSlider.value,10));
+    const path=astar({r:s.r,c:s.c},{r:e.r,c:e.c},riskGrid,k);
+    routeState.path=path; routeState.riskGrid=riskGrid; routeState.startId=s.id; routeState.endId=e.id; routeState.weight=parseInt(weightSlider.value,10);
+
+    renderAirports(mapPlan, planLayers.airports, s.id, e.id);
+    renderRoute(planLayers.route, path, riskGrid);
+    renderGrid(planLayers.grid, riskGrid);
+    const bounds=L.latLngBounds(path.map(p=>gridToLatLng(p.r,p.c)));
+    mapPlan.fitBounds(bounds, {padding:[30,30]});
+
+    const risks=path.map(p=>riskGrid[p.r][p.c].score);
+    const avgRisk=risks.reduce((a,b)=>a+b,0)/risks.length;
+    let maxIdx=0; risks.forEach((v,i)=>{ if(v>risks[maxIdx]) maxIdx=i; });
+    document.getElementById("sumDist").textContent=path.length+"개 격자";
+    document.getElementById("sumAvgRisk").textContent=Math.round(avgRisk)+" / 100";
+    document.getElementById("sumMaxRisk").textContent=Math.round(risks[maxIdx])+" / 100 (구간 "+(maxIdx+1)+"/"+path.length+")";
+    document.getElementById("sumWeight").textContent=(routeState.weight>=50? "안전 우선 ":"신속 우선 ")+routeState.weight+"%";
+
+    document.getElementById("briefBtn").disabled=false;
+    document.getElementById("goSimBtn").disabled=false;
+    document.getElementById("briefText").textContent="브리핑을 요청하면 전체 경로의 위험 구간을 AI가 요약해드립니다.";
+    document.getElementById("briefText").classList.add("empty");
+
+    resetSimState();
+  }
+  document.getElementById("planBtn").addEventListener("click", planRoute);
+  gridToggle1.addEventListener("change", ()=>{ if(gridToggle1.checked) mapPlan.addLayer(planLayers.grid); else mapPlan.removeLayer(planLayers.grid); });
+
+  // ---------- AI briefing (pre-flight) ----------
+  const BRIEF_SYSTEM = "당신은 항공기상청 산하 소형 항공기·드론 운항 브리핑 AI입니다. 입력으로 전체 경로의 평균 위험지수, 최고 위험 구간의 위치(전체 경로 중 몇 번째 구간인지)와 수치, 총 구간 수를 받습니다. 이를 바탕으로 출발 전 조종사에게 전달할 한국어 브리핑을 2~3문장으로 작성하세요. 전체적인 경로 난이도 평가, 주의해야 할 구간, 권장 대응(고도/속도/시간대 조정 등)을 담되 과장하지 말고 간결하게 작성하세요. 이모지는 쓰지 마세요.";
+  async function requestBriefing(){
+    const btn=document.getElementById("briefBtn");
+    const box=document.getElementById("briefText");
+    btn.disabled=true; box.textContent="브리핑 생성 중…"; box.classList.add("empty");
+    const risks=routeState.path.map(p=>routeState.riskGrid[p.r][p.c].score);
+    const avgRisk=risks.reduce((a,b)=>a+b,0)/risks.length;
+    let maxIdx=0; risks.forEach((v,i)=>{ if(v>risks[maxIdx]) maxIdx=i; });
+    const s=AIRPORTS.find(a=>a.id===routeState.startId), e=AIRPORTS.find(a=>a.id===routeState.endId);
+    const userMsg=`경로: ${s.name} → ${e.name}, 총 ${routeState.path.length}개 구간. 평균 위험지수 ${Math.round(avgRisk)}/100. 최고 위험 구간은 전체 ${routeState.path.length}개 중 ${maxIdx+1}번째 구간이며 위험지수 ${Math.round(risks[maxIdx])}/100. 경로 가중치 설정: ${routeState.weight}(0=신속우선,100=안전우선).`;
+    try{
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-6", max_tokens:1000, system:BRIEF_SYSTEM, messages:[{role:"user", content:userMsg}]})
+      });
+      const data=await resp.json();
+      const text=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join(" ").trim();
+      box.textContent = text || `전체 경로 평균 위험지수는 ${Math.round(avgRisk)}로, ${maxIdx+1}번째 구간에서 위험지수 ${Math.round(risks[maxIdx])}로 가장 높습니다. 해당 구간에서 속도를 줄이고 고도 조정을 준비하세요.`;
+    }catch(err){
+      box.textContent = `전체 경로 평균 위험지수는 ${Math.round(avgRisk)}로, ${maxIdx+1}번째 구간에서 위험지수 ${Math.round(risks[maxIdx])}로 가장 높습니다. 해당 구간에서 속도를 줄이고 고도 조정을 준비하세요.`;
+    }
+    box.classList.remove("empty");
+    btn.disabled=false;
+  }
+  document.getElementById("briefBtn").addEventListener("click", requestBriefing);
+  document.getElementById("goSimBtn").addEventListener("click", ()=>{ initSimView(); showTab(2); });
+
+  // ================= TAB 2: Simulation =================
+  const simEmpty=document.getElementById("simEmpty"), simContent=document.getElementById("simContent");
+  const logBody=document.getElementById("logBody");
+  const voiceToggle=document.getElementById("voiceToggle");
+  const gridToggle2=document.getElementById("gridToggle2");
+
+  let idx=0, running=false, timer=null;
+  let durationSec=120; // 2 minutes baseline
+  let lastAdvisoryAt=0, advisoryInFlight=false;
+  const replanThresholds=[0.25,0.5,0.75];
+  let triggeredThresholds=new Set();
+  let liveRiskGrid=null;
+
+  function addLog(kind, tagText, text, simMinutes){
+    const el=document.createElement("div");
+    el.className="logentry "+kind;
+    el.innerHTML=`<span class="tag">${tagText}</span>${text}<time>T+${fmtTime(simMinutes)}</time>`;
+    logBody.appendChild(el);
+    logBody.scrollTop=logBody.scrollHeight;
+  }
+
+  function initSimView(){
+    if(!mapSim){
+      mapSim=makeMap('mapSim');
+      simLayers={route:L.layerGroup().addTo(mapSim), airports:L.layerGroup().addTo(mapSim), grid:L.layerGroup()};
+      const planeIcon=L.divIcon({className:'', html:'<div class="plane-arrow" id="planeArrow"></div>', iconSize:[16,16], iconAnchor:[8,8]});
+      window._planeMarker=L.marker(gridToLatLng(routeState.path[0].r,routeState.path[0].c), {icon:planeIcon}).addTo(mapSim);
+    }
+    simEmpty.style.display="none";
+    simContent.style.display="block";
+    liveRiskGrid=routeState.riskGrid;
+    renderAirports(mapSim, simLayers.airports, routeState.startId, routeState.endId);
+    renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+    renderGrid(simLayers.grid, liveRiskGrid);
+    const bounds=L.latLngBounds(routeState.path.map(p=>gridToLatLng(p.r,p.c)));
+    setTimeout(()=>{ mapSim.invalidateSize(); mapSim.fitBounds(bounds,{padding:[30,30]}); }, 60);
+    resetSimState();
+  }
+
+  function resetSimState(){
+    idx=0; running=false; triggeredThresholds=new Set(); lastAdvisoryAt=0;
+    clearInterval(timer);
+    document.getElementById("startBtn").disabled=false;
+    document.getElementById("pauseBtn").disabled=true;
+    const advEl=document.getElementById("advisoryText");
+    if(advEl){ advEl.textContent="운항을 시작하면 현재 위치 기준 조언이 여기에 표시됩니다."; advEl.classList.add("empty"); }
+    if(logBody) logBody.innerHTML="";
+    if(routeState.path && mapSim){
+      liveRiskGrid=routeState.riskGrid;
+      renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+      window._planeMarker.setLatLng(gridToLatLng(routeState.path[0].r, routeState.path[0].c));
+      updateHud();
+    }
+  }
+
+  function cellRisk(r,c){ return liveRiskGrid[Math.round(Math.max(0,Math.min(ROWS-1,r)))][Math.round(Math.max(0,Math.min(COLS-1,c)))]; }
+
+  function updateHud(){
+    if(!routeState.path) return;
+    const i=Math.min(routeState.path.length-1, Math.round(idx));
+    const cell=routeState.path[i];
+    const rk=cellRisk(cell.r,cell.c);
+    const totalFlightMinutes=90; // narrative flight time the compressed sim represents
+    const simMin = (idx/(routeState.path.length-1)) * totalFlightMinutes;
+    document.getElementById("roTime").textContent=fmtTime(simMin);
+    document.getElementById("roProg").textContent=Math.round(100*idx/(routeState.path.length-1))+"%";
+    document.getElementById("roWind").textContent=Math.round(rk.wind)+" kt";
+    document.getElementById("roTurb").textContent=Math.round(rk.turb)+" / 100";
+    document.getElementById("roVis").textContent=rk.vis.toFixed(1)+" km";
+    document.getElementById("roTerr").textContent=rk.terrN.toFixed(2);
+    const riskEl=document.getElementById("roRisk");
+    riskEl.textContent=Math.round(rk.score)+" / 100";
+    riskEl.className="v "+(rk.score<40?"risk-low":rk.score<65?"risk-mid":"risk-high");
+    return rk;
+  }
+
+  function interpLatLng(path, idxF){
+    const i0=Math.floor(idxF), i1=Math.min(path.length-1,i0+1), t=idxF-i0;
+    const p0=gridToLatLng(path[i0].r,path[i0].c), p1=gridToLatLng(path[i1].r,path[i1].c);
+    return {lat:lerp(p0[0],p1[0],t), lng:lerp(p0[1],p1[1],t), p0, p1};
+  }
+
+  const ADVISORY_SYSTEM="당신은 소형 항공기·드론 조종사를 보조하는 실시간 운항 조언 AI입니다. 입력으로 현재 위치의 풍속, 난기류지수, 시정, 지형고도지수, 종합위험지수, 목적지까지 남은 구간 수를 받습니다. 이를 바탕으로 '지금부터 어떻게 운항하면 좋을지'에 대한 조언을 한국어 1~2문장으로 간결하게 제공하세요. 경로 자체를 바꾸라는 말은 하지 마세요(그건 별도 알고리즘이 담당합니다). 고도·속도·방향 미세조정, 주의사항 등 조종 행동에 집중하고, 실제 무전 교신처럼 담백하게 말하세요. 이모지는 쓰지 마세요.";
+  function fallbackAdvisory(rk){
+    if(rk.score>=65) return `전방 위험지수 ${Math.round(rk.score)}로 높습니다. 속도를 줄이고 고도 조정을 검토하세요. 풍속 ${Math.round(rk.wind)}노트, 시정 ${rk.vis.toFixed(1)}km입니다.`;
+    if(rk.score>=40) return `위험지수 ${Math.round(rk.score)}로 중간 수준입니다. 현재 속도를 유지하되 전방 기상 변화를 주시하세요.`;
+    return `현재 구간은 안정적입니다. 현재 고도와 속도를 유지하며 계획된 경로로 운항하세요.`;
+  }
+  async function fetchAdvisory(rk, remainingCells, destName){
+    const userMsg=`현재 상태 - 풍속: ${Math.round(rk.wind)}노트, 난기류지수: ${Math.round(rk.turb)}/100, 시정: ${rk.vis.toFixed(1)}km, 지형고도지수: ${rk.terrN.toFixed(2)}(0~1), 종합위험지수: ${Math.round(rk.score)}/100, 목적지(${destName})까지 남은 구간: ${remainingCells}. 이 상황에서 조종사에게 줄 조언을 말해주세요.`;
+    try{
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-6", max_tokens:1000, system:ADVISORY_SYSTEM, messages:[{role:"user", content:userMsg}]})
+      });
+      const data=await resp.json();
+      const text=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join(" ").trim();
+      return text || fallbackAdvisory(rk);
+    }catch(e){ return fallbackAdvisory(rk); }
+  }
+  function speak(text){
+    if(!voiceToggle.checked || !("speechSynthesis" in window)) return;
+    const u=new SpeechSynthesisUtterance(text); u.lang="ko-KR"; u.rate=1.02;
+    const kv=window.speechSynthesis.getVoices().find(v=>v.lang && v.lang.startsWith("ko"));
+    if(kv) u.voice=kv;
+    window.speechSynthesis.speak(u);
+  }
+  async function requestAdvisory(force){
+    if(!routeState.path) return;
+    const now=Date.now();
+    if(!force && now-lastAdvisoryAt<6000) return;
+    if(advisoryInFlight) return;
+    advisoryInFlight=true; lastAdvisoryAt=now;
+    const i=Math.min(routeState.path.length-1, Math.round(idx));
+    const cell=routeState.path[i];
+    const rk=cellRisk(cell.r,cell.c);
+    const e=AIRPORTS.find(a=>a.id===routeState.endId);
+    const remaining=routeState.path.length-1-i;
+    const box=document.getElementById("advisoryText");
+    box.textContent="AI 조언 생성 중…"; box.classList.add("empty");
+    const text=await fetchAdvisory(rk, remaining, e.name);
+    box.textContent=text; box.classList.remove("empty");
+    addLog("ai","AI", text, (idx/(routeState.path.length-1))*90);
+    speak(text);
+    advisoryInFlight=false;
+  }
+  document.getElementById("adviceBtn").addEventListener("click", ()=>requestAdvisory(true));
+
+  // ---------- Simulation loop ----------
+  const TICK_MS=200;
+  function tick(){
+    if(!running || !routeState.path) return;
+    const spdMult=parseFloat(document.querySelector(".btngroup button.active[data-spd]").dataset.spd);
+    const effectiveDuration=durationSec/spdMult;
+    const totalTicks=effectiveDuration*1000/TICK_MS;
+    idx += (routeState.path.length-1)/totalTicks;
+    if(idx>=routeState.path.length-1){
+      idx=routeState.path.length-1;
+      window._planeMarker.setLatLng(gridToLatLng(routeState.path[idx].r, routeState.path[idx].c));
+      updateHud();
+      addLog("sys","SYS","목적지 도착. 운항을 종료합니다.", 90);
+      stopSim();
+      return;
+    }
+    const pos=interpLatLng(routeState.path, idx);
+    window._planeMarker.setLatLng([pos.lat,pos.lng]);
+    const dLat=pos.p1[0]-pos.p0[0], dLng=pos.p1[1]-pos.p0[1];
+    const angle=Math.atan2(dLng,dLat)*180/Math.PI;
+    const arrowEl=document.getElementById("planeArrow");
+    if(arrowEl) arrowEl.style.transform=`rotate(${angle}deg)`;
+    const rk=updateHud();
+
+    const i0=Math.floor(idx);
+    let maxRisk=0;
+    for(let off=1; off<=4 && i0+off<routeState.path.length; off++){
+      const cc=routeState.path[i0+off]; const r2=cellRisk(cc.r,cc.c);
+      if(r2.score>maxRisk) maxRisk=r2.score;
+    }
+    if(maxRisk>=55) requestAdvisory(false);
+
+    const progress=idx/(routeState.path.length-1);
+    for(const th of replanThresholds){
+      if(progress>=th && !triggeredThresholds.has(th)){
+        triggeredThresholds.add(th);
+        doReplan(progress, i0); // fire-and-forget — fetch(백엔드)가 걸릴 수 있어 tick을 막지 않음
+      }
+    }
+  }
+  let replanInFlight=false;
+  async function doReplan(progress, i0){
+    if(replanInFlight) return;
+    replanInFlight=true;
+    try{
+      const simT=progress*3; // 시뮬레이션 모드에서 기상이 진행되는 가상 시간(약 3시간 분량)
+      const newGrid=await getRiskGrid(simT);
+      const k=weightToK(routeState.weight);
+      const e=AIRPORTS.find(a=>a.id===routeState.endId);
+      const curCell=routeState.path[i0];
+      const newSub=astar({r:curCell.r,c:curCell.c},{r:e.r,c:e.c},newGrid,k);
+      liveRiskGrid=newGrid;
+      if(gridToggle2.checked) renderGrid(simLayers.grid, liveRiskGrid);
+      if(newSub && newSub.length>1){
+        const oldRemaining=JSON.stringify(routeState.path.slice(i0));
+        const changed = oldRemaining !== JSON.stringify(newSub);
+        routeState.path = routeState.path.slice(0,i0).concat(newSub);
+        idx=i0;
+        renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+        addLog("sys","SYS", `실시간 기상 데이터 갱신 — ${changed? "새 위험지수를 반영해 남은 경로를 재계산했습니다.":"재계산 결과 기존 경로를 유지합니다."}`, progress*90);
+      }
+    } finally { replanInFlight=false; }
+  }
+  function startSim(){
+    running=true;
+    document.getElementById("startBtn").disabled=true;
+    document.getElementById("pauseBtn").disabled=false;
+    if(idx===0) addLog("sys","SYS","운항을 시작합니다.",0);
+    timer=setInterval(tick, TICK_MS);
+  }
+  function stopSim(){ running=false; clearInterval(timer); document.getElementById("startBtn").disabled=false; document.getElementById("pauseBtn").disabled=true; }
+
+  document.getElementById("startBtn").addEventListener("click", startSim);
+  document.getElementById("pauseBtn").addEventListener("click", ()=>{ stopSim(); addLog("sys","SYS","일시정지되었습니다.", (idx/(routeState.path.length-1))*90); });
+  document.getElementById("resetBtn").addEventListener("click", resetSimState);
+  document.querySelectorAll(".btngroup button[data-spd]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      document.querySelectorAll(".btngroup button[data-spd]").forEach(b=>b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  });
+  gridToggle2.addEventListener("change", ()=>{ if(!mapSim) return; if(gridToggle2.checked) mapSim.addLayer(simLayers.grid); else mapSim.removeLayer(simLayers.grid); });
+
+  if("speechSynthesis" in window){ window.speechSynthesis.onvoiceschanged=()=>{}; }
+
+  // ---------- init ----------
+  planRoute();
+})();
+</script>
+</body>
+</html>

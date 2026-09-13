@@ -57,6 +57,15 @@
   .maphead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;}
   .maphead h2{font-size:12px;font-weight:600;margin:0;color:var(--muted);}
   .legend{display:flex;gap:10px;font-size:10px;color:var(--muted);align-items:center;}
+  .hazard-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px dashed var(--edge);}
+  .hazard-legend span{display:inline-flex;align-items:center;gap:4px;}
+  .hazard-pin{
+    width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:13px;border:2px solid rgba(10,15,28,0.85);box-shadow:0 1px 4px rgba(0,0,0,0.5);
+  }
+  .leaflet-popup-content-wrapper{background:var(--panel);color:var(--text);border:1px solid var(--edge);border-radius:6px;}
+  .leaflet-popup-tip{background:var(--panel);}
+  .leaflet-popup-content{font-size:12.5px;line-height:1.5;}
   .legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:3px;vertical-align:-1px;}
   .plane-arrow{width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:15px solid #fff;
     filter:drop-shadow(0 0 3px rgba(0,0,0,0.7));transform-origin:50% 60%;}
@@ -151,6 +160,9 @@
       </div>
     </div>
     <div id="mapPlan" class="mapbox"></div>
+    <div class="hazard-legend">
+      <span>💨 강풍</span><span>🌀 난기류</span><span>🌫️ 저시정</span><span>🌧️ 강수</span><span>⛰️ 고지형</span>
+    </div>
   </div>
 
   <div class="grid2">
@@ -211,6 +223,9 @@
           </div>
         </div>
         <div id="mapSim" class="mapbox"></div>
+        <div class="hazard-legend">
+          <span>💨 강풍</span><span>🌀 난기류</span><span>🌫️ 저시정</span><span>🌧️ 강수</span><span>⛰️ 고지형</span>
+        </div>
       </div>
 
       <div class="hud panel">
@@ -374,7 +389,7 @@
   const mapPlan=makeMap('mapPlan');
   let mapSim=null; // created lazily on first sim view
 
-  const planLayers={route:L.layerGroup().addTo(mapPlan), airports:L.layerGroup().addTo(mapPlan), grid:L.layerGroup()};
+  const planLayers={route:L.layerGroup().addTo(mapPlan), airports:L.layerGroup().addTo(mapPlan), hazards:L.layerGroup().addTo(mapPlan), grid:L.layerGroup()};
   let simLayers=null;
 
   function renderAirports(map, layerGroup, startId, endId){
@@ -401,6 +416,55 @@
     for(let r=0;r<ROWS;r+=1) for(let c=0;c<COLS;c+=1){
       L.rectangle(cellBounds(r,c), {color:riskColor(riskGrid[r][c].score), weight:0, fillOpacity:0.28}).addTo(layerGroup);
     }
+  }
+
+  // ---------- Hazard pins: "왜" 위험한지(강풍/난기류/저시정/강수/고지형)를 아이콘으로 표시 ----------
+  const HAZARD_TYPES = {
+    wind:   {icon:"💨", label:"강풍"},
+    turb:   {icon:"🌀", label:"난기류"},
+    vis:    {icon:"🌫️", label:"저시정"},
+    precip: {icon:"🌧️", label:"강수"},
+    terr:   {icon:"⛰️", label:"고지형"},
+  };
+  function classifyHazard(rk){
+    const windN=Math.min(1, rk.wind/45);
+    const turbN=Math.min(1, rk.turb/100);
+    const visN=Math.min(1, Math.max(0,(10-rk.vis)/9));
+    const precN=Math.min(1, rk.precip);
+    const terrN=rk.terrN;
+    const factors=[
+      {k:"wind", v:windN}, {k:"turb", v:turbN}, {k:"vis", v:visN},
+      {k:"precip", v:precN}, {k:"terr", v:terrN},
+    ];
+    factors.sort((a,b)=>b.v-a.v);
+    return factors[0];
+  }
+  function hazardPopupHtml(rk, dom){
+    const parts=[`<b>${HAZARD_TYPES[dom.k].icon} ${HAZARD_TYPES[dom.k].label} 위험 구간</b>`,
+      `위험지수 ${Math.round(rk.score)} / 100`,
+      `풍속 ${Math.round(rk.wind)}kt · 난기류 ${Math.round(rk.turb)}/100 · 시정 ${rk.vis.toFixed(1)}km`];
+    if(rk.precip>0.3) parts.push("강수 감지");
+    if(rk.terrN>0.55) parts.push("산악 지형 인근");
+    return parts.join("<br>");
+  }
+  function renderHazards(layerGroup, path, riskGrid){
+    layerGroup.clearLayers();
+    let lastKey=null, lastIdx=-99;
+    path.forEach((cell,i)=>{
+      const rk=riskGrid[cell.r][cell.c];
+      if(rk.score<35) return;
+      const dom=classifyHazard(rk);
+      if(dom.v<0.45) return;
+      if(dom.k===lastKey && i-lastIdx<3) return; // 같은 유형 핀이 너무 촘촘히 겹치지 않도록
+      lastKey=dom.k; lastIdx=i;
+      const p=gridToLatLng(cell.r,cell.c);
+      const color=riskColor(rk.score);
+      const icon=L.divIcon({
+        className:"", iconSize:[24,24], iconAnchor:[12,12],
+        html:`<div class="hazard-pin" style="background:${color}">${HAZARD_TYPES[dom.k].icon}</div>`,
+      });
+      L.marker(p, {icon}).addTo(layerGroup).bindPopup(hazardPopupHtml(rk, dom));
+    });
   }
 
   // ---------- Tab switching ----------
@@ -468,6 +532,7 @@
 
     renderAirports(mapPlan, planLayers.airports, s.id, e.id);
     renderRoute(planLayers.route, path, riskGrid);
+    renderHazards(planLayers.hazards, path, riskGrid);
     renderGrid(planLayers.grid, riskGrid);
     const bounds=L.latLngBounds(path.map(p=>gridToLatLng(p.r,p.c)));
     mapPlan.fitBounds(bounds, {padding:[30,30]});
@@ -542,7 +607,7 @@
   function initSimView(){
     if(!mapSim){
       mapSim=makeMap('mapSim');
-      simLayers={route:L.layerGroup().addTo(mapSim), airports:L.layerGroup().addTo(mapSim), grid:L.layerGroup()};
+      simLayers={route:L.layerGroup().addTo(mapSim), airports:L.layerGroup().addTo(mapSim), hazards:L.layerGroup().addTo(mapSim), grid:L.layerGroup()};
       const planeIcon=L.divIcon({className:'', html:'<div class="plane-arrow" id="planeArrow"></div>', iconSize:[16,16], iconAnchor:[8,8]});
       window._planeMarker=L.marker(gridToLatLng(routeState.path[0].r,routeState.path[0].c), {icon:planeIcon}).addTo(mapSim);
     }
@@ -551,6 +616,7 @@
     liveRiskGrid=routeState.riskGrid;
     renderAirports(mapSim, simLayers.airports, routeState.startId, routeState.endId);
     renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+    renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
     renderGrid(simLayers.grid, liveRiskGrid);
     const bounds=L.latLngBounds(routeState.path.map(p=>gridToLatLng(p.r,p.c)));
     setTimeout(()=>{ mapSim.invalidateSize(); mapSim.fitBounds(bounds,{padding:[30,30]}); }, 60);
@@ -568,6 +634,7 @@
     if(routeState.path && mapSim){
       liveRiskGrid=routeState.riskGrid;
       renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+      renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
       window._planeMarker.setLatLng(gridToLatLng(routeState.path[0].r, routeState.path[0].c));
       updateHud();
     }
@@ -705,6 +772,7 @@
         routeState.path = routeState.path.slice(0,i0).concat(newSub);
         idx=i0;
         renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+        renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
         addLog("sys","SYS", `실시간 기상 데이터 갱신 — ${changed? "새 위험지수를 반영해 남은 경로를 재계산했습니다.":"재계산 결과 기존 경로를 유지합니다."}`, progress*90);
       }
     } finally { replanInFlight=false; }

@@ -304,7 +304,7 @@
   }
 
   // ---------- Weather (time-dependent) ----------
-  function stormCenterCol(t){ const speed=COLS/7; return ((t*speed)%(COLS+12))-6; }
+  function stormCenterCol(t){ const speed=COLS/7; return ((t*speed + 16)%(COLS+12))-6; }
   function stormIntensity(r,c,t){
     const sc=stormCenterCol(t), dx=c-sc;
     const base=Math.exp(-(dx*dx)/(2*3.2*3.2));
@@ -452,9 +452,9 @@
     let lastKey=null, lastIdx=-99;
     path.forEach((cell,i)=>{
       const rk=riskGrid[cell.r][cell.c];
-      if(rk.score<35) return;
+      if(rk.score<20) return;
       const dom=classifyHazard(rk);
-      if(dom.v<0.45) return;
+      if(dom.v<0.32) return;
       if(dom.k===lastKey && i-lastIdx<3) return; // 같은 유형 핀이 너무 촘촘히 겹치지 않도록
       lastKey=dom.k; lastIdx=i;
       const p=gridToLatLng(cell.r,cell.c);
@@ -803,5 +803,8 @@
   planRoute();
 })();
 </script>
+</body>
+</html>
+
 </body>
 </html>

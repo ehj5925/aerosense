@@ -285,6 +285,7 @@
     return {r:Math.max(0,Math.min(ROWS-1,r)), c:Math.max(0,Math.min(COLS-1,c))};
   }
   function gridToLatLng(r,c){ return [BBOX.latN-r*latStep, BBOX.lonW+c*lonStep]; }
+  function airportLL(id){ const a=AIRPORTS.find(x=>x.id===id); return a?[a.lat,a.lon]:null; }
   function cellBounds(r,c){
     const latTop=BBOX.latN-(r-0.5)*latStep, latBot=BBOX.latN-(r+0.5)*latStep;
     const lonL=BBOX.lonW+(c-0.5)*lonStep, lonR=BBOX.lonW+(c+0.5)*lonStep;
@@ -302,7 +303,7 @@
     for(let c=0;c<COLS;c++){
       const d=c-ridgeCol(r);
       const base=Math.exp(-(d*d)/(2*2.2*2.2));
-      row.push(Math.min(1, base*0.95+hash(r,c)*0.2));
+      row.push(Math.min(1, base + base*hash(r,c)*0.35));
     }
     elevGrid.push(row);
   }
@@ -407,12 +408,26 @@
         .addTo(layerGroup);
     });
   }
-  function renderRoute(layerGroup, path, riskGrid){
+  function renderRoute(layerGroup, path, riskGrid, startLL, endLL){
     layerGroup.clearLayers();
+    const ptAt=(i)=>{
+      if(i===0 && startLL) return startLL;
+      if(i===path.length-1 && endLL) return endLL;
+      return gridToLatLng(path[i].r, path[i].c);
+    };
     for(let i=0;i<path.length-1;i++){
       const a=path[i], b=path[i+1];
       const avgRisk=(riskGrid[a.r][a.c].score+riskGrid[b.r][b.c].score)/2;
-      L.polyline([gridToLatLng(a.r,a.c), gridToLatLng(b.r,b.c)], {color:riskColor(avgRisk), weight:5, opacity:0.85, lineCap:"round"}).addTo(layerGroup);
+      L.polyline([ptAt(i), ptAt(i+1)], {color:riskColor(avgRisk), weight:5, opacity:0.85, lineCap:"round"}).addTo(layerGroup);
+    }
+    // 웨이포인트 점: 여러 구간을 이어 붙여 계산한 경로라는 걸 시각적으로 드러냄 (출발/도착 제외, 몇 칸 간격으로만 찍어 과밀 방지)
+    const step=Math.max(1, Math.round(path.length/14));
+    for(let i=step; i<path.length-1; i+=step){
+      const cell=path[i];
+      const rk=riskGrid[cell.r][cell.c];
+      L.circleMarker(gridToLatLng(cell.r,cell.c), {
+        radius:3.5, color:"#0A0F1C", weight:1, fillColor:riskColor(rk.score), fillOpacity:1,
+      }).addTo(layerGroup);
     }
   }
   function renderGrid(layerGroup, riskGrid){
@@ -587,7 +602,7 @@
     routeState.path=path; routeState.riskGrid=riskGrid; routeState.startId=s.id; routeState.endId=e.id; routeState.weight=parseInt(weightSlider.value,10);
 
     renderAirports(mapPlan, planLayers.airports, s.id, e.id);
-    renderRoute(planLayers.route, path, riskGrid);
+    renderRoute(planLayers.route, path, riskGrid, [s.lat,s.lon], [e.lat,e.lon]);
     renderHazards(planLayers.hazards, path, riskGrid);
     renderAreaHazards(planLayers.areaHazards, riskGrid);
     renderGrid(planLayers.grid, riskGrid);
@@ -669,13 +684,13 @@
       mapSim=makeMap('mapSim');
       simLayers={route:L.layerGroup().addTo(mapSim), airports:L.layerGroup().addTo(mapSim), hazards:L.layerGroup().addTo(mapSim), areaHazards:L.layerGroup().addTo(mapSim), grid:L.layerGroup()};
       const planeIcon=L.divIcon({className:'', html:'<div class="plane-arrow" id="planeArrow"></div>', iconSize:[16,16], iconAnchor:[8,8]});
-      window._planeMarker=L.marker(gridToLatLng(routeState.path[0].r,routeState.path[0].c), {icon:planeIcon}).addTo(mapSim);
+      window._planeMarker=L.marker(airportLL(routeState.startId)||gridToLatLng(routeState.path[0].r,routeState.path[0].c), {icon:planeIcon}).addTo(mapSim);
     }
     simEmpty.style.display="none";
     simContent.style.display="block";
     liveRiskGrid=routeState.riskGrid;
     renderAirports(mapSim, simLayers.airports, routeState.startId, routeState.endId);
-    renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+    renderRoute(simLayers.route, routeState.path, liveRiskGrid, airportLL(routeState.startId), airportLL(routeState.endId));
     renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
     renderAreaHazards(simLayers.areaHazards, liveRiskGrid);
     renderGrid(simLayers.grid, liveRiskGrid);
@@ -694,10 +709,10 @@
     if(logBody) logBody.innerHTML="";
     if(routeState.path && mapSim){
       liveRiskGrid=routeState.riskGrid;
-      renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+      renderRoute(simLayers.route, routeState.path, liveRiskGrid, airportLL(routeState.startId), airportLL(routeState.endId));
       renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
       renderAreaHazards(simLayers.areaHazards, liveRiskGrid);
-      window._planeMarker.setLatLng(gridToLatLng(routeState.path[0].r, routeState.path[0].c));
+      window._planeMarker.setLatLng(airportLL(routeState.startId)||gridToLatLng(routeState.path[0].r, routeState.path[0].c));
       updateHud();
     }
   }
@@ -785,7 +800,7 @@
     idx += (routeState.path.length-1)/totalTicks;
     if(idx>=routeState.path.length-1){
       idx=routeState.path.length-1;
-      window._planeMarker.setLatLng(gridToLatLng(routeState.path[idx].r, routeState.path[idx].c));
+      window._planeMarker.setLatLng(airportLL(routeState.endId)||gridToLatLng(routeState.path[idx].r, routeState.path[idx].c));
       updateHud();
       addLog("sys","SYS","목적지 도착. 운항을 종료합니다.", 90);
       stopSim();
@@ -834,7 +849,7 @@
         const changed = oldRemaining !== JSON.stringify(newSub);
         routeState.path = routeState.path.slice(0,i0).concat(newSub);
         idx=i0;
-        renderRoute(simLayers.route, routeState.path, liveRiskGrid);
+        renderRoute(simLayers.route, routeState.path, liveRiskGrid, airportLL(routeState.startId), airportLL(routeState.endId));
         renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
         addLog("sys","SYS", `실시간 기상 데이터 갱신 — ${changed? "새 위험지수를 반영해 남은 경로를 재계산했습니다.":"재계산 결과 기존 경로를 유지합니다."}`, progress*90);
       }

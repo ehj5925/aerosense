@@ -63,6 +63,7 @@
     width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
     font-size:13px;border:2px solid rgba(10,15,28,0.85);box-shadow:0 1px 4px rgba(0,0,0,0.5);
   }
+  .hazard-pin-sm{width:18px;height:18px;font-size:10px;opacity:0.82;border-width:1.5px;}
   .leaflet-popup-content-wrapper{background:var(--panel);color:var(--text);border:1px solid var(--edge);border-radius:6px;}
   .leaflet-popup-tip{background:var(--panel);}
   .leaflet-popup-content{font-size:12.5px;line-height:1.5;}
@@ -148,6 +149,7 @@
     </div>
     <div class="field"><label>&nbsp;</label><button id="planBtn" class="primary">경로 생성</button></div>
     <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="gridToggle1"><label for="gridToggle1">위험지수 격자 표시</label></div></div>
+    <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="areaHazardToggle1" checked><label for="areaHazardToggle1">지역 전체 위험요인 표시</label></div></div>
   </div>
 
   <div class="panel" style="padding:10px;">
@@ -210,6 +212,7 @@
       </div>
       <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="voiceToggle" checked><label for="voiceToggle">AI 음성 안내</label></div></div>
       <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="gridToggle2"><label for="gridToggle2">위험지수 격자 표시</label></div></div>
+      <div class="field"><label>&nbsp;</label><div class="chk"><input type="checkbox" id="areaHazardToggle2" checked><label for="areaHazardToggle2">지역 전체 위험요인 표시</label></div></div>
       <div class="field"><label>&nbsp;</label><button id="adviceBtn">지금 조언 요청</button></div>
     </div>
 
@@ -390,7 +393,7 @@
   const mapPlan=makeMap('mapPlan');
   let mapSim=null; // created lazily on first sim view
 
-  const planLayers={route:L.layerGroup().addTo(mapPlan), airports:L.layerGroup().addTo(mapPlan), hazards:L.layerGroup().addTo(mapPlan), grid:L.layerGroup()};
+  const planLayers={route:L.layerGroup().addTo(mapPlan), airports:L.layerGroup().addTo(mapPlan), hazards:L.layerGroup().addTo(mapPlan), areaHazards:L.layerGroup().addTo(mapPlan), grid:L.layerGroup()};
   let simLayers=null;
 
   function renderAirports(map, layerGroup, startId, endId){
@@ -469,6 +472,34 @@
 
     return `${overall}<br>${windTxt} · ${visTxt} · ${turbTxt} · ${precipTxt} · ${terrTxt}.`;
   }
+  // ---------- 지역 전체 위험요인 표시: 경로와 무관하게, 격자 전체를 훑어 "왜 이 경로가 나왔는지"의 근거를 지도에 깔아둔다 ----------
+  function renderAreaHazards(layerGroup, riskGrid){
+    layerGroup.clearLayers();
+    const block=2; // 2x2 격자 블록당 대표 핀 1개만 표시해 지도가 과밀해지지 않도록 함
+    for(let br=0; br<ROWS; br+=block){
+      for(let bc=0; bc<COLS; bc+=block){
+        let best=null;
+        for(let r=br; r<Math.min(ROWS,br+block); r++){
+          for(let c=bc; c<Math.min(COLS,bc+block); c++){
+            const rk=riskGrid[r][c];
+            if(rk.score<20) continue;
+            const dom=classifyHazard(rk);
+            if(dom.v<0.32) continue;
+            if(!best || rk.score>best.rk.score) best={r,c,rk,dom};
+          }
+        }
+        if(best){
+          const p=gridToLatLng(best.r,best.c);
+          const color=riskColor(best.rk.score);
+          const icon=L.divIcon({
+            className:"", iconSize:[18,18], iconAnchor:[9,9],
+            html:`<div class="hazard-pin hazard-pin-sm" style="background:${color}">${HAZARD_TYPES[best.dom.k].icon}</div>`,
+          });
+          L.marker(p, {icon}).addTo(layerGroup).bindPopup(hazardPopupHtml(best.rk, best.dom));
+        }
+      }
+    }
+  }
   function renderHazards(layerGroup, path, riskGrid){
     layerGroup.clearLayers();
     let lastKey=null, lastIdx=-99;
@@ -512,6 +543,7 @@
   startSel.value="GMP"; endSel.value="CJU";
   const weightSlider=document.getElementById("weightSlider");
   const gridToggle1=document.getElementById("gridToggle1");
+  const areaHazardToggle1=document.getElementById("areaHazardToggle1");
 
   const routeState={ path:null, riskGrid:null, startId:null, endId:null, weight:null };
 
@@ -557,6 +589,7 @@
     renderAirports(mapPlan, planLayers.airports, s.id, e.id);
     renderRoute(planLayers.route, path, riskGrid);
     renderHazards(planLayers.hazards, path, riskGrid);
+    renderAreaHazards(planLayers.areaHazards, riskGrid);
     renderGrid(planLayers.grid, riskGrid);
     const bounds=L.latLngBounds(path.map(p=>gridToLatLng(p.r,p.c)));
     mapPlan.fitBounds(bounds, {padding:[30,30]});
@@ -579,6 +612,7 @@
   }
   document.getElementById("planBtn").addEventListener("click", planRoute);
   gridToggle1.addEventListener("change", ()=>{ if(gridToggle1.checked) mapPlan.addLayer(planLayers.grid); else mapPlan.removeLayer(planLayers.grid); });
+  areaHazardToggle1.addEventListener("change", ()=>{ if(areaHazardToggle1.checked) mapPlan.addLayer(planLayers.areaHazards); else mapPlan.removeLayer(planLayers.areaHazards); });
 
   // ---------- AI briefing (pre-flight) ----------
   const BRIEF_SYSTEM = "당신은 항공기상청 산하 소형 항공기·드론 운항 브리핑 AI입니다. 입력으로 전체 경로의 평균 위험지수, 최고 위험 구간의 위치(전체 경로 중 몇 번째 구간인지)와 수치, 총 구간 수를 받습니다. 이를 바탕으로 출발 전 조종사에게 전달할 한국어 브리핑을 2~3문장으로 작성하세요. 전체적인 경로 난이도 평가, 주의해야 할 구간, 권장 대응(고도/속도/시간대 조정 등)을 담되 과장하지 말고 간결하게 작성하세요. 이모지는 쓰지 마세요.";
@@ -613,6 +647,7 @@
   const logBody=document.getElementById("logBody");
   const voiceToggle=document.getElementById("voiceToggle");
   const gridToggle2=document.getElementById("gridToggle2");
+  const areaHazardToggle2=document.getElementById("areaHazardToggle2");
 
   let idx=0, running=false, timer=null;
   let durationSec=120; // 2 minutes baseline
@@ -632,7 +667,7 @@
   function initSimView(){
     if(!mapSim){
       mapSim=makeMap('mapSim');
-      simLayers={route:L.layerGroup().addTo(mapSim), airports:L.layerGroup().addTo(mapSim), hazards:L.layerGroup().addTo(mapSim), grid:L.layerGroup()};
+      simLayers={route:L.layerGroup().addTo(mapSim), airports:L.layerGroup().addTo(mapSim), hazards:L.layerGroup().addTo(mapSim), areaHazards:L.layerGroup().addTo(mapSim), grid:L.layerGroup()};
       const planeIcon=L.divIcon({className:'', html:'<div class="plane-arrow" id="planeArrow"></div>', iconSize:[16,16], iconAnchor:[8,8]});
       window._planeMarker=L.marker(gridToLatLng(routeState.path[0].r,routeState.path[0].c), {icon:planeIcon}).addTo(mapSim);
     }
@@ -642,6 +677,7 @@
     renderAirports(mapSim, simLayers.airports, routeState.startId, routeState.endId);
     renderRoute(simLayers.route, routeState.path, liveRiskGrid);
     renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
+    renderAreaHazards(simLayers.areaHazards, liveRiskGrid);
     renderGrid(simLayers.grid, liveRiskGrid);
     const bounds=L.latLngBounds(routeState.path.map(p=>gridToLatLng(p.r,p.c)));
     setTimeout(()=>{ mapSim.invalidateSize(); mapSim.fitBounds(bounds,{padding:[30,30]}); }, 60);
@@ -660,6 +696,7 @@
       liveRiskGrid=routeState.riskGrid;
       renderRoute(simLayers.route, routeState.path, liveRiskGrid);
       renderHazards(simLayers.hazards, routeState.path, liveRiskGrid);
+      renderAreaHazards(simLayers.areaHazards, liveRiskGrid);
       window._planeMarker.setLatLng(gridToLatLng(routeState.path[0].r, routeState.path[0].c));
       updateHud();
     }
@@ -791,6 +828,7 @@
       const newSub=astar({r:curCell.r,c:curCell.c},{r:e.r,c:e.c},newGrid,k);
       liveRiskGrid=newGrid;
       if(gridToggle2.checked) renderGrid(simLayers.grid, liveRiskGrid);
+      renderAreaHazards(simLayers.areaHazards, liveRiskGrid);
       if(newSub && newSub.length>1){
         const oldRemaining=JSON.stringify(routeState.path.slice(i0));
         const changed = oldRemaining !== JSON.stringify(newSub);
@@ -821,6 +859,7 @@
     });
   });
   gridToggle2.addEventListener("change", ()=>{ if(!mapSim) return; if(gridToggle2.checked) mapSim.addLayer(simLayers.grid); else mapSim.removeLayer(simLayers.grid); });
+  areaHazardToggle2.addEventListener("change", ()=>{ if(!mapSim) return; if(areaHazardToggle2.checked) mapSim.addLayer(simLayers.areaHazards); else mapSim.removeLayer(simLayers.areaHazards); });
 
   if("speechSynthesis" in window){ window.speechSynthesis.onvoiceschanged=()=>{}; }
 
@@ -831,6 +870,3 @@
 </body>
 </html>
 
-
-</body>
-</html>

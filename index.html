@@ -172,6 +172,7 @@
       <div class="stat-row"><span>평균 위험지수</span><span class="v" id="sumAvgRisk">–</span></div>
       <div class="stat-row"><span>최고 위험지수 구간</span><span class="v" id="sumMaxRisk">–</span></div>
       <div class="stat-row"><span>가중치 설정</span><span class="v" id="sumWeight">–</span></div>
+      <div class="briefbox" id="routeWeatherSummary" style="margin-top:10px;font-size:12.5px;line-height:1.55;">경로를 생성하면 전체 구간의 기상·지형 개요가 여기 표시됩니다.</div>
     </div>
     <div class="card panel">
       <h2>AI 사전 브리핑</h2>
@@ -447,6 +448,27 @@
     if(rk.terrN>0.55) parts.push("산악 지형 인근");
     return parts.join("<br>");
   }
+  function summarizeRouteWeather(path, riskGrid){
+    const cells=path.map(p=>riskGrid[p.r][p.c]);
+    const n=cells.length;
+    const avg=(key)=>cells.reduce((a,c)=>a+c[key],0)/n;
+    const avgWind=avg("wind"), avgTurb=avg("turb"), avgVis=avg("vis"), avgTerr=avg("terrN");
+    const precipFrac=cells.filter(c=>c.precip>0.3).length/n;
+    const avgScore=avg("score");
+
+    const windTxt = avgWind<12 ? "바람은 약한 편" : avgWind<28 ? "바람은 보통 수준" : "구간 전반에 강풍 요인 있음";
+    const visTxt = avgVis>=8 ? "시정은 대체로 양호" : avgVis>=5 ? "시정이 다소 제한되는 구간 있음" : "저시정 구간 포함";
+    const turbTxt = avgTurb<20 ? "난기류 신호 없음" : avgTurb<40 ? "약한 난기류 가능성 있음" : "난기류 주의 구간 포함";
+    const terrTxt = avgTerr<0.3 ? "경로는 대부분 평지·해상 위주" : avgTerr<0.55 ? "일부 구릉지를 지나는 경로" : "산악지형을 통과하는 구간 포함";
+    const precipTxt = precipFrac<0.05 ? "강수 없음" : `구간의 약 ${Math.round(precipFrac*100)}%에서 강수 감지`;
+
+    let overall;
+    if(avgScore<20) overall = "✅ 전 구간 대체로 맑고 안정적인 경로예요.";
+    else if(avgScore<45) overall = "🟡 전반적으로 양호하나 일부 구간 주의가 필요해요.";
+    else overall = "🔴 위험 요인이 여러 구간에 걸쳐 있는 경로예요.";
+
+    return `${overall}<br>${windTxt} · ${visTxt} · ${turbTxt} · ${precipTxt} · ${terrTxt}.`;
+  }
   function renderHazards(layerGroup, path, riskGrid){
     layerGroup.clearLayers();
     let lastKey=null, lastIdx=-99;
@@ -508,8 +530,10 @@
   async function getRiskGrid(t){
     if(!useRealDataChk.checked){ setDataStatus("sim","시뮬레이션 모드"); return buildRiskGrid(t); }
     const base=backendUrlInput.value.trim().replace(/\/+$/,"");
+    setDataStatus("sim","서버 깨우는 중… (최대 50초)");
     try{
-      const resp=await fetch(`${base}/api/live-grid`, {signal: AbortSignal.timeout(8000)});
+      // 렌더 무료 인스턴스는 오래 쉬면 잠들어서, 깨어나는 데 최대 50초 가까이 걸릴 수 있음
+      const resp=await fetch(`${base}/api/live-grid`, {signal: AbortSignal.timeout(60000)});
       if(!resp.ok) throw new Error("HTTP "+resp.status);
       const data=await resp.json();
       if(!data.grid || data.grid.length!==ROWS) throw new Error("격자 형식 불일치");
@@ -544,6 +568,7 @@
     document.getElementById("sumAvgRisk").textContent=Math.round(avgRisk)+" / 100";
     document.getElementById("sumMaxRisk").textContent=Math.round(risks[maxIdx])+" / 100 (구간 "+(maxIdx+1)+"/"+path.length+")";
     document.getElementById("sumWeight").textContent=(routeState.weight>=50? "안전 우선 ":"신속 우선 ")+routeState.weight+"%";
+    document.getElementById("routeWeatherSummary").innerHTML=summarizeRouteWeather(path, riskGrid);
 
     document.getElementById("briefBtn").disabled=false;
     document.getElementById("goSimBtn").disabled=false;
@@ -805,6 +830,7 @@
 </script>
 </body>
 </html>
+
 
 </body>
 </html>
